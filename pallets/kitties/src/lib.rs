@@ -13,8 +13,11 @@ pub mod pallet {
 		pallet_prelude::*,
 		sp_runtime::traits::{Hash, Zero},
 		traits::{Currency, ExistenceRequirement, Randomness},
+		Blake2_128Concat, Hashable,
 	};
-	use frame_system::pallet_prelude::{BlockNumberFor, *};
+	use frame_system::{
+		pallet_prelude::{BlockNumberFor, *},
+	};
 	use scale_info::TypeInfo;
 
 	// TODO Part II: Struct for holding Kitty information.
@@ -61,7 +64,10 @@ pub mod pallet {
 		type Currency: Currency<Self::AccountId>;
 
 		type KittyRandomness: Randomness<Self::Hash, BlockNumberFor<Self>>;
-		// TODO Part II: Specify the custom types for our runtime.
+
+		/// The maximum amount of kitties a single account can own.
+		#[pallet::constant]
+		type MaxKittiesOwned: Get<u32>;
 	}
 
 	#[pallet::event]
@@ -73,8 +79,18 @@ pub mod pallet {
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_cnt)]
 	/// Keeps track of the number of Kitties in existence.
-	pub(super) type KittyCnt<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub type CountForKitties<T: Config> = StorageValue<_, u64, ValueQuery>;
 
+	#[pallet::storage]
+	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 16], Kitty<T>, ValueQuery>;
+
+	#[pallet::storage]
+	pub type MaxKittiesOwned<T: Config> = StorageMap<
+		_,
+		Blake2_128Concat,
+		T::AccountId,
+		BoundedVec<[u8; 16], T::MaxKittiesOwned>, ValueQuery,
+	>;
 	// TODO Part II: Remaining storage items.
 
 	// TODO Part III: Our pallet's genesis configuration.
@@ -106,6 +122,26 @@ pub mod pallet {
 			match random.as_ref()[0] % 2 {
 				0 => Gender::Male,
 				_ => Gender::Female,
+			}
+		}
+		fn gen_dna() -> [u8; 16] {
+			let random = T::KittyRandomness::random(&b"dnaaf"[..]).0;
+
+			let unique_payload = (
+				random,
+				frame_system::Pallet::<T>::extrinsic_index().unwrap_or_default(),
+				frame_system::Pallet::<T>::block_number(),
+			);
+
+			let encoded_payload = unique_payload.encode();
+			let hash = Blake2_128(&encoded_payload);
+			// Generate Gender
+			if hash[0] % 2 == 0 {
+				// Males are identified by having a even leading byte
+				(hash, Gender::Male)
+			} else {
+				// Females are identified by having a odd leading byte
+				(hash, Gender::Female)
 			}
 		}
 		// TODO Part III: helper functions for dispatchable functions

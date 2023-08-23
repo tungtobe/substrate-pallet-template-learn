@@ -280,6 +280,7 @@ impl pallet_kitties::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
 	type KittyRandomness = RandomnessCollectiveFlip; 
+	type MaxKittyOwned = MaxKittyOwned;
 }
 
 impl pallet_insecure_randomness_collective_flip::Config for Runtime {}
