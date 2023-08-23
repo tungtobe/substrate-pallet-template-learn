@@ -14,7 +14,8 @@ pub mod pallet {
 		sp_runtime::traits::{Hash, Zero},
 		traits::{Currency, ExistenceRequirement, Randomness},
 	};
-	use frame_system::pallet_prelude::*;
+	use frame_system::pallet_prelude::{BlockNumberFor, *};
+	use scale_info::TypeInfo;
 
 	// TODO Part II: Struct for holding Kitty information.
 
@@ -23,15 +24,43 @@ pub mod pallet {
 	#[pallet::pallet]
 	pub struct Pallet<T>(_);
 
+	#[cfg(feature = "std")]
+	use frame_support::serde::{Deserialize, Serialize};
+
+	type BalanceOf<T> =
+		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
+
+	// Struct for holding kitty information
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Kitty<T: Config> {
+		pub dna: [u8; 16],
+		pub price: Option<BalanceOf<T>>,
+		pub gender: Gender,
+		pub owner: T::AccountId,
+	}
+
+	// Set Gender type in kitty struct
+	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+	// We need this to pass kitty info for genesis configuration
+	// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	pub enum Gender {
+		Male,
+		Female,
+	}
+
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
-	pub trait Config: frame_system::Config {
+	pub trait Config:
+		frame_system::Config + pallet_insecure_randomness_collective_flip::Config
+	{
 		/// Because this pallet emits events, it depends on the runtime's definition of an event.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
 		/// The Currency handler for the Kitties pallet.
 		type Currency: Currency<Self::AccountId>;
 
+		type KittyRandomness: Randomness<Self::Hash, BlockNumberFor<Self>>;
 		// TODO Part II: Specify the custom types for our runtime.
 	}
 
@@ -41,7 +70,10 @@ pub mod pallet {
 		// TODO Part III
 	}
 
-	// ACTION: Storage item to keep a count of all existing Kitties.
+	#[pallet::storage]
+	#[pallet::getter(fn kitty_cnt)]
+	/// Keeps track of the number of Kitties in existence.
+	pub(super) type KittyCnt<T: Config> = StorageValue<_, u64, ValueQuery>;
 
 	// TODO Part II: Remaining storage items.
 
@@ -69,6 +101,13 @@ pub mod pallet {
 	// TODO Parts II: helper function for Kitty struct
 
 	impl<T: Config> Pallet<T> {
+		fn gen_gender() -> Gender {
+			let random = T::KittyRandomness::random(&b"gender"[..]).0;
+			match random.as_ref()[0] % 2 {
+				0 => Gender::Male,
+				_ => Gender::Female,
+			}
+		}
 		// TODO Part III: helper functions for dispatchable functions
 
 		// TODO: increment_nonce, random_hash, mint, transfer_from
