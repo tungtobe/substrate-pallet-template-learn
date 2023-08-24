@@ -12,19 +12,14 @@ pub mod pallet {
 		dispatch::{DispatchResult, DispatchResultWithPostInfo},
 		pallet_prelude::*,
 		sp_runtime::traits::{Hash, Zero},
-		traits::{Currency, ExistenceRequirement, Randomness},
+		traits::{Currency, Randomness},
 		Blake2_128Concat, Hashable,
 	};
-	use frame_system::{
-		pallet_prelude::{BlockNumberFor, *},
-	};
+	use frame_system::pallet_prelude::{BlockNumberFor, *};
 	use scale_info::TypeInfo;
 
-	// TODO Part II: Struct for holding Kitty information.
-
-	// TODO Part II: Enum and implementation to handle Gender type in Kitty struct.
-
 	#[pallet::pallet]
+	#[pallet::without_storage_info]
 	pub struct Pallet<T>(_);
 
 	#[cfg(feature = "std")]
@@ -32,25 +27,6 @@ pub mod pallet {
 
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
-
-	// Struct for holding kitty information
-	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
-	#[scale_info(skip_type_params(T))]
-	pub struct Kitty<T: Config> {
-		pub dna: [u8; 16],
-		pub price: Option<BalanceOf<T>>,
-		pub gender: Gender,
-		pub owner: T::AccountId,
-	}
-
-	// Set Gender type in kitty struct
-	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
-	// We need this to pass kitty info for genesis configuration
-	// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
-	pub enum Gender {
-		Male,
-		Female,
-	}
 
 	/// Configure the pallet by specifying the parameters and types on which it depends.
 	#[pallet::config]
@@ -67,7 +43,7 @@ pub mod pallet {
 
 		/// The maximum amount of kitties a single account can own.
 		#[pallet::constant]
-		type MaxKittiesOwned: Get<u32>;
+		type MaxKittyOwned: Get<u32>;
 	}
 
 	#[pallet::event]
@@ -76,24 +52,41 @@ pub mod pallet {
 		// TODO Part III
 	}
 
+	// Set Gender type in kitty struct
+	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
+	// We need this to pass kitty info for genesis configuration
+	// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	pub enum Gender {
+		Male,
+		Female,
+	}
+
+	// Struct for holding kitty information
+	#[derive(Clone, Encode, Decode, PartialEq, RuntimeDebug, TypeInfo)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Kitty<T: Config> {
+		pub dna: [u8; 16],
+		pub price: Option<BalanceOf<T>>,
+		pub gender: Gender,
+		pub owner: T::AccountId,
+	}
+
 	#[pallet::storage]
 	#[pallet::getter(fn kitty_cnt)]
 	/// Keeps track of the number of Kitties in existence.
 	pub type CountForKitties<T: Config> = StorageValue<_, u64, ValueQuery>;
 
 	#[pallet::storage]
-	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 16], Kitty<T>, ValueQuery>;
+	pub type Kitties<T: Config> = StorageMap<_, Blake2_128Concat, [u8; 16], Kitty<T>>;
 
 	#[pallet::storage]
-	pub type MaxKittiesOwned<T: Config> = StorageMap<
+	pub type KittiesOwned<T: Config> = StorageMap<
 		_,
 		Blake2_128Concat,
 		T::AccountId,
-		BoundedVec<[u8; 16], T::MaxKittiesOwned>, ValueQuery,
+		BoundedVec<[u8; 16], T::MaxKittyOwned>,
+		ValueQuery,
 	>;
-	// TODO Part II: Remaining storage items.
-
-	// TODO Part III: Our pallet's genesis configuration.
 
 	// Errors.
 	#[pallet::error]
@@ -124,7 +117,7 @@ pub mod pallet {
 				_ => Gender::Female,
 			}
 		}
-		fn gen_dna() -> [u8; 16] {
+		fn gen_dna() -> ([u8; 16], Gender) {
 			let random = T::KittyRandomness::random(&b"dnaaf"[..]).0;
 
 			let unique_payload = (
@@ -134,7 +127,7 @@ pub mod pallet {
 			);
 
 			let encoded_payload = unique_payload.encode();
-			let hash = Blake2_128(&encoded_payload);
+			let hash = (&encoded_payload).blake2_128();
 			// Generate Gender
 			if hash[0] % 2 == 0 {
 				// Males are identified by having a even leading byte
