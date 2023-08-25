@@ -11,7 +11,10 @@ pub mod pallet {
 	use frame_support::{
 		dispatch::{DispatchResult, DispatchResultWithPostInfo},
 		pallet_prelude::*,
-		sp_runtime::traits::{Hash, Zero},
+		sp_runtime::{
+			traits::{Hash, Zero},
+			ArithmeticError,
+		},
 		traits::{Currency, Randomness},
 		Blake2_128Concat, Hashable,
 	};
@@ -49,7 +52,14 @@ pub mod pallet {
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		// TODO Part III
+		/// A new kitty was successfully created.
+		Created { kitty: [u8; 16], owner: T::AccountId },
+		/// The price of a kitty was successfully set.
+		PriceSet { kitty: [u8; 16], price: Option<BalanceOf<T>> },
+		/// A kitty was successfully transferred.
+		Transferred { from: T::AccountId, to: T::AccountId, kitty: [u8; 16] },
+		/// A kitty was successfully sold.
+		Sold { seller: T::AccountId, buyer: T::AccountId, kitty: [u8; 16], price: BalanceOf<T> },
 	}
 
 	// Set Gender type in kitty struct
@@ -91,12 +101,42 @@ pub mod pallet {
 	// Errors.
 	#[pallet::error]
 	pub enum Error<T> {
-		// TODO Part III
+		/// An account may only own `MaxKittiesOwned` kitties.
+		TooManyOwned,
+		/// Trying to transfer or buy a kitty from oneself.
+		TransferToSelf,
+		/// This kitty already exists!
+		DuplicateKitty,
+		/// This kitty does not exist!
+		NoKitty,
+		/// You are not the owner of this kitty.
+		NotOwner,
+		/// This kitty is not for sale.
+		NotForSale,
+		/// Ensures that the buying price is greater than the asking price.
+		BidPriceTooLow,
+		/// You need to have two cats with different gender to breed.
+		CantBreed,
 	}
 
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
-		// TODO Part III: create_kitty
+		#[pallet::call_index(0)]
+		#[pallet::weight(10_000)]
+		pub fn create_kitty(origin: OriginFor<T>) -> DispatchResult {
+			let sender = ensure_signed(origin)?; // <- add this line
+
+			// Generate unique DNA and Gender
+			let (kitty_gen_dna, gender) = Self::gen_dna();
+
+			let kitty_id = Self::mint(&sender, kitty_gen_dna, gender)?; // <- add this line
+															// Logging to the console
+			frame_support::log::info!("A kitty is born with ID: {:?}.", kitty_id); // <- add this line
+
+			// ACTION #4: Deposit `Created` event
+
+			Ok(())
+		}
 
 		// TODO Part III: set_price
 
@@ -110,13 +150,6 @@ pub mod pallet {
 	// TODO Parts II: helper function for Kitty struct
 
 	impl<T: Config> Pallet<T> {
-		fn gen_gender() -> Gender {
-			let random = T::KittyRandomness::random(&b"gender"[..]).0;
-			match random.as_ref()[0] % 2 {
-				0 => Gender::Male,
-				_ => Gender::Female,
-			}
-		}
 		fn gen_dna() -> ([u8; 16], Gender) {
 			let random = T::KittyRandomness::random(&b"dnaaf"[..]).0;
 
@@ -138,7 +171,32 @@ pub mod pallet {
 			}
 		}
 		// TODO Part III: helper functions for dispatchable functions
+		pub fn mint(
+			owner: &T::AccountId,
+			dna: [u8; 16],
+			gender: Gender,
+		) -> Result<[u8; 16], DispatchError> {
+			let kitty = Kitty::<T> { dna, price: None, gender, owner: owner.clone() };
 
+			ensure!(!Kitties::<T>::contains_key(&kitty.dna), Error::<T>::DuplicateKitty);
+
+			let count = CountForKitties::<T>::get();
+			let new_count = count.checked_add(1).ok_or(ArithmeticError::Overflow)?;
+
+			// Append kitty to KittiesOwner
+			KittiesOwned::<T>::try_append(&owner, kitty.dna)
+				.map_err(|_| Error::<T>::TooManyOwned)?;
+
+			// Write new kitty to storage
+			Kitties::<T>::insert(kitty.dna, kitty);
+			CountForKitties::<T>::put(new_count);
+
+			// Deposit our "Created" event.
+			Self::deposit_event(Event::Created { kitty: dna, owner: owner.clone() });
+
+			// Returns the DNA of the new kitty if this succeeds
+			Ok(dna)
+		}
 		// TODO: increment_nonce, random_hash, mint, transfer_from
 	}
 }
