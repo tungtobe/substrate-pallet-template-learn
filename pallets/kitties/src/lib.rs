@@ -15,10 +15,13 @@ pub mod pallet {
 			traits::{Hash, Zero},
 			ArithmeticError,
 		},
-		traits::{Currency, Randomness},
+		traits::{Currency, Randomness,ExistenceRequirement},
 		Blake2_128Concat, Hashable,
 	};
-	use frame_system::pallet_prelude::{BlockNumberFor, *};
+	use frame_system::{
+		pallet_prelude::{BlockNumberFor, OriginFor, *},
+		Origin,
+	};
 	use scale_info::TypeInfo;
 
 	#[pallet::pallet]
@@ -124,24 +127,55 @@ pub mod pallet {
 		#[pallet::call_index(0)]
 		#[pallet::weight(10_000)]
 		pub fn create_kitty(origin: OriginFor<T>) -> DispatchResult {
-			let sender = ensure_signed(origin)?; // <- add this line
+			let sender = ensure_signed(origin)?; //
 
 			// Generate unique DNA and Gender
 			let (kitty_gen_dna, gender) = Self::gen_dna();
 
-			let kitty_id = Self::mint(&sender, kitty_gen_dna, gender)?; // <- add this line
-															// Logging to the console
-			frame_support::log::info!("A kitty is born with ID: {:?}.", kitty_id); // <- add this line
+			let kitty_id = Self::mint(&sender, kitty_gen_dna, gender)?;
 
-			// ACTION #4: Deposit `Created` event
+			frame_support::log::info!("A kitty is born with ID: {:?}.", kitty_id);
 
 			Ok(())
 		}
 
-		// TODO Part III: set_price
+		#[pallet::call_index(1)]
+		#[pallet::weight(10_000)]
+		pub fn set_price(
+			origin: OriginFor<T>,
+			kitty_id: [u8; 16],
+			new_price: Option<BalanceOf<T>>,
+		) -> DispatchResult {
+			// Make sure the caller is from a signed origin
+			let sender = ensure_signed(origin)?;
 
-		// TODO Part III: transfer
+			// Ensure the kitty exists and is called by the kitty owner
+			let mut kitty = Kitties::<T>::get(&kitty_id).ok_or(Error::<T>::NoKitty)?;
+			ensure!(kitty.owner == sender, Error::<T>::NotOwner);
 
+			// Set the price in storage
+			kitty.price = new_price;
+			Kitties::<T>::insert(&kitty_id, kitty);
+
+			Self::deposit_event(Event::PriceSet { kitty: kitty_id, price: new_price });
+
+			Ok(())
+		}
+
+#[pallet::call_index(2)]
+		#[pallet::weight(10_000)]
+		pub fn transfer(
+			origin: OriginFor<T>,
+			to: T::AccountId,
+			kitty_id: [u8;16],
+		) -> DispatchResult {
+			// Make sure the caller is from a signed origin
+			let from = ensure_signed(origin)?;
+			let kitty = Kitties::<T>::get(&kitty_id).ok_or(Error::<T>::NoKitty)?;
+			ensure!(kitty.owner == from, Error::<T>::NotOwner);
+			Self::do_transfer(kitty_id, to, None)?;
+			Ok(())
+		}
 		// TODO Part III: buy_kitty
 
 		// TODO Part III: breed_kitty
@@ -197,6 +231,62 @@ pub mod pallet {
 			// Returns the DNA of the new kitty if this succeeds
 			Ok(dna)
 		}
-		// TODO: increment_nonce, random_hash, mint, transfer_from
+
+		pub fn do_transfer(
+			kitty_id: [u8; 16],
+			to: T::AccountId,
+			maybe_limit_price: Option<BalanceOf<T>>,
+		) -> DispatchResult {
+			let mut kitty = Kitties::<T>::get(&kitty_id).ok_or(Error::<T>::NoKitty)?;
+			let from = kitty.owner;
+
+			ensure!(from != to , Error::<T>::TransferToSelf);
+			let mut from_owned = KittiesOwned::<T>::get(&from);
+
+			// Remove kitty from list of owned kitties.
+			if let Some(ind) = from_owned.iter().position(|&id| id == kitty_id){
+				from_owned.swap_remove(ind);
+			}else{
+				return Err(Error::<T>::NoKitty.into());
+			}
+
+			// Add kitty to the list of owned kitties.
+			let mut to_owned = KittiesOwned::<T>::get(&to);
+			to_owned.try_push(kitty_id).map_err(|_| Error::<T>::TooManyOwned)?;
+
+			// Mutating state here via a balance transfer, so nothing is allowed to fail after this.
+			// The buyer will always be charged the actual price. The limit_price parameter is just a 
+			// protection so the seller isn't able to front-run the transaction.
+			if let Some(limit_price) = maybe_limit_price {
+				if let Some(price) = kitty.price {
+					ensure!(limit_price >= price, Error::<T>::BidPriceTooLow);
+					// Transfer the amount from buyer to seller
+					T::Currency::transfer(&to, &from, price, ExistenceRequirement::KeepAlive)?;
+					// Deposit sold event
+					Self::deposit_event(Event::Sold {
+						seller: from.clone(),
+						buyer: to.clone(),
+						kitty: kitty_id,
+						price,
+					});
+				}else{
+					// Kitty price is set to `None` and is not for sale
+					return Err(Error::<T>::NotForSale.into());
+				}
+			}
+			// Transfer succeeded, update the kitty owner and reset the price to `None`.
+			kitty.owner = to.clone();
+			kitty.price = None;
+
+			// Write updates to storage
+			Kitties::<T>::insert(&kitty_id, kitty);
+			KittiesOwned::<T>::insert(&to, to_owned);
+			KittiesOwned::<T>::insert(&from, from_owned);
+
+			Self::deposit_event(Event::Transferred { from, to, kitty: kitty_id });
+
+			Ok(())
+		}
+
 	}
 }
