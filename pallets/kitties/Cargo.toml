@@ -21,6 +21,7 @@ frame-benchmarking = { version = "4.0.0-dev", default-features = false, optional
 frame-support = { version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0" }
 frame-system = { version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0" }
 pallet-insecure-randomness-collective-flip = { version = "4.0.0-dev", default-features = false, git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0" }
+serde = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 sp-core = { version = "21.0.0", git = "https://github.com/paritytech/substrate.git", branch = "polkadot-v1.0.0" }
@@ -35,6 +36,7 @@ std = [
 	"frame-support/std",
 	"pallet-insecure-randomness-collective-flip/std",
 	"frame-system/std",
+	'serde/std',
 	"scale-info/std",
 ]
 runtime-benchmarks = ["frame-benchmarking/runtime-benchmarks"]

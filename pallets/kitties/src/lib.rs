@@ -9,16 +9,18 @@ pub use pallet::*;
 pub mod pallet {
 	use super::*;
 	use frame_support::{
-		dispatch::{DispatchResult, DispatchResultWithPostInfo},
+		dispatch::{DispatchResult, DispatchResultWithPostInfo, Vec},
 		pallet_prelude::*,
+		sp_runtime,
 		sp_runtime::{
 			traits::{Hash, Zero},
 			ArithmeticError,
 		},
-		traits::{Currency, Randomness,ExistenceRequirement},
+		traits::{Currency, ExistenceRequirement, Randomness},
 		Blake2_128Concat, Hashable,
 	};
 	use frame_system::{
+		config_preludes,
 		pallet_prelude::{BlockNumberFor, OriginFor, *},
 		Origin,
 	};
@@ -29,7 +31,7 @@ pub mod pallet {
 	pub struct Pallet<T>(_);
 
 	#[cfg(feature = "std")]
-	use frame_support::serde::{Deserialize, Serialize};
+	use serde::{Deserialize, Serialize};
 
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -68,7 +70,7 @@ pub mod pallet {
 	// Set Gender type in kitty struct
 	#[derive(Clone, Encode, Decode, PartialEq, Copy, RuntimeDebug, TypeInfo, MaxEncodedLen)]
 	// We need this to pass kitty info for genesis configuration
-	// #[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	pub enum Gender {
 		Male,
 		Female,
@@ -100,6 +102,30 @@ pub mod pallet {
 		BoundedVec<[u8; 16], T::MaxKittyOwned>,
 		ValueQuery,
 	>;
+
+	#[pallet::genesis_config]
+	#[derive(frame_support::DefaultNoBound)]
+	pub struct GenesisConfig<T: Config> {
+		pub kitties: Vec<(T::AccountId, [u8; 16])>,
+	}
+
+	// #[cfg(feature = "std")]
+	// impl<T: Config> Default for GenesisConfig<T> {
+	// 	fn default() -> GenesisConfig<T> {
+	// 		GenesisConfig { kitties: vec![] }
+	// 	}
+	// }
+
+	#[pallet::genesis_build]
+	impl<T: Config> BuildGenesisConfig for GenesisConfig<T> {
+		fn build(&self) {
+			// When building a kitty from genesis config, we require the DNA and Gender to be
+			// supplied
+			// for (account, dna, gender) in &self.kitties {
+			// 	assert!(Pallet::<T>::mint(account, *dna, *gender).is_ok());
+			// }
+		}
+	}
 
 	// Errors.
 	#[pallet::error]
@@ -162,12 +188,12 @@ pub mod pallet {
 			Ok(())
 		}
 
-#[pallet::call_index(2)]
+		#[pallet::call_index(2)]
 		#[pallet::weight(10_000)]
 		pub fn transfer(
 			origin: OriginFor<T>,
 			to: T::AccountId,
-			kitty_id: [u8;16],
+			kitty_id: [u8; 16],
 		) -> DispatchResult {
 			// Make sure the caller is from a signed origin
 			let from = ensure_signed(origin)?;
@@ -176,9 +202,49 @@ pub mod pallet {
 			Self::do_transfer(kitty_id, to, None)?;
 			Ok(())
 		}
-		// TODO Part III: buy_kitty
 
-		// TODO Part III: breed_kitty
+		#[pallet::call_index(3)]
+		#[pallet::weight(10_000)]
+		pub fn buy_kitty(
+			origin: OriginFor<T>,
+			kitty_id: [u8; 16],
+			limit_price: BalanceOf<T>,
+		) -> DispatchResult {
+			// Make sure the caller is from a signed origin
+			let buyer = ensure_signed(origin)?;
+			// Transfer the kitty from seller to buyer as a sale
+			Self::do_transfer(kitty_id, buyer, Some(limit_price))?;
+
+			Ok(())
+		}
+
+		#[pallet::call_index(4)]
+		#[pallet::weight(10_000)]
+		pub fn breed_kitty(
+			origin: OriginFor<T>,
+			parent_1: [u8; 16],
+			parent_2: [u8; 16],
+		) -> DispatchResult {
+			// Make sure the caller is from a signed origin
+			let sender = ensure_signed(origin)?;
+
+			let maybe_mom = Kitties::<T>::get(&parent_1).ok_or(Error::<T>::NoKitty)?;
+			let maybe_dad = Kitties::<T>::get(&parent_2).ok_or(Error::<T>::NoKitty)?;
+
+			// Check both parents are owned by the caller of this function
+			ensure!(maybe_mom.owner == sender, Error::<T>::NotOwner);
+			ensure!(maybe_dad.owner == sender, Error::<T>::NotOwner);
+
+			// Parents must be of opposite genders
+			ensure!(maybe_mom.gender != maybe_dad.gender, Error::<T>::CantBreed);
+
+			// Create new DNA from these parents
+			let (new_dna, new_gender) = Self::breed_dna(&parent_1, &parent_2);
+
+			// Mint new kitty
+			Self::mint(&sender, new_dna, new_gender)?;
+			Ok(())
+		}
 	}
 
 	// TODO Parts II: helper function for Kitty struct
@@ -240,14 +306,14 @@ pub mod pallet {
 			let mut kitty = Kitties::<T>::get(&kitty_id).ok_or(Error::<T>::NoKitty)?;
 			let from = kitty.owner;
 
-			ensure!(from != to , Error::<T>::TransferToSelf);
+			ensure!(from != to, Error::<T>::TransferToSelf);
 			let mut from_owned = KittiesOwned::<T>::get(&from);
 
 			// Remove kitty from list of owned kitties.
-			if let Some(ind) = from_owned.iter().position(|&id| id == kitty_id){
+			if let Some(ind) = from_owned.iter().position(|&id| id == kitty_id) {
 				from_owned.swap_remove(ind);
-			}else{
-				return Err(Error::<T>::NoKitty.into());
+			} else {
+				return Err(Error::<T>::NoKitty.into())
 			}
 
 			// Add kitty to the list of owned kitties.
@@ -255,8 +321,8 @@ pub mod pallet {
 			to_owned.try_push(kitty_id).map_err(|_| Error::<T>::TooManyOwned)?;
 
 			// Mutating state here via a balance transfer, so nothing is allowed to fail after this.
-			// The buyer will always be charged the actual price. The limit_price parameter is just a 
-			// protection so the seller isn't able to front-run the transaction.
+			// The buyer will always be charged the actual price. The limit_price parameter is just
+			// a protection so the seller isn't able to front-run the transaction.
 			if let Some(limit_price) = maybe_limit_price {
 				if let Some(price) = kitty.price {
 					ensure!(limit_price >= price, Error::<T>::BidPriceTooLow);
@@ -269,9 +335,9 @@ pub mod pallet {
 						kitty: kitty_id,
 						price,
 					});
-				}else{
+				} else {
 					// Kitty price is set to `None` and is not for sale
-					return Err(Error::<T>::NotForSale.into());
+					return Err(Error::<T>::NotForSale.into())
 				}
 			}
 			// Transfer succeeded, update the kitty owner and reset the price to `None`.
@@ -288,5 +354,24 @@ pub mod pallet {
 			Ok(())
 		}
 
+		pub fn breed_dna(parent1: &[u8; 16], parent2: &[u8; 16]) -> ([u8; 16], Gender) {
+			let (mut new_dna, new_gender) = Self::gen_dna();
+
+			for i in 0..new_dna.len() {
+				new_dna[i] = Self::mutate_dna_fragment(parent1[i], parent2[i], new_dna[i])
+			}
+
+			(new_dna, new_gender)
+		}
+
+		fn mutate_dna_fragment(dna_fragment1: u8, dna_fragment2: u8, random_value: u8) -> u8 {
+			if random_value % 2 == 0 {
+				// either return `dna_fragment1` if its an even value
+				dna_fragment1
+			} else {
+				// or return `dna_fragment2` if its an odd value
+				dna_fragment2
+			}
+		}
 	}
 }
